@@ -46,7 +46,7 @@ AUTHORIZED_KEYS="${SSH_DIR}/authorized_keys"
 mkdir -p ${SSH_DIR}
 
 # 下载并安装 SSH 密钥
-if ! wget -N --no-check-certificate -O ${AUTHORIZED_KEYS} "\$1"; then
+if ! curl -sSL "\$1" >> ${AUTHORIZED_KEYS}; then
     echo -e "${ERROR} 下载 SSH 公钥失败！" && exit 1
 fi
 
@@ -55,12 +55,11 @@ chmod 700 ${SSH_DIR}
 chmod 600 ${AUTHORIZED_KEYS}
 
 # 禁用密码认证，启用公钥认证
-sed -i '/^#PubkeyAuthentication\s\+yes/s/^#//' /etc/ssh/sshd_config
-sed -i '/^PasswordAuthentication\s\+yes/s/yes/no/' /etc/ssh/sshd_config
+sed -i '/^#\?PubkeyAuthentication\s\+\w\+/c\PubkeyAuthentication yes' /etc/ssh/sshd_config
+sed -i '/^#\?PasswordAuthentication\s\+\w\+/c\PasswordAuthentication no' /etc/ssh/sshd_config
 
 # 允许 root 用户使用 SSH 密钥登录
-sed -i '/^#PermitRootLogin\s\+prohibit-password/s/^#//' /etc/ssh/sshd_config
-sed -i '/^PermitRootLogin\s\+yes/s/yes/prohibit-password/' /etc/ssh/sshd_config
+sed -i '/^#\?PermitRootLogin\s\+\w\+/c\PermitRootLogin prohibit-password' /etc/ssh/sshd_config
 
 # 重启 SSH 服务
 if [[ ${release} == "centos" ]]; then

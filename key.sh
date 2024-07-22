@@ -20,26 +20,21 @@ USAGE() {
 SSH Key Installer $VERSION
 
 Usage:
-  bash <(curl -fsSL git.io/key.sh) [options...] <arg>
+bash <(curl -fsSL git.io/key.sh) [options...] <arg>
 
 Options:
-  -o	Overwrite mode, this option is valid at the top
-  -g	Get the public key from GitHub, the arguments is the GitHub ID
-  -u	Get the public key from the URL, the arguments is the URL
-  -f	Get the public key from the local file, the arguments is the local file path
-  -p	Change SSH port, the arguments is port number
-  -d	Disable password login
-  -r    Enable root login"
+-o Overwrite mode, this option is valid at the top
+-g Get the public key from GitHub, the arguments is the GitHub ID
+-u Get the public key from the URL, the arguments is the URL
+-f Get the public key from the local file, the arguments is the local file path
+-p Change SSH port, the arguments is port number
+-d Disable password login
+-r Enable root login"
 }
-
-if [ $# -eq 0 ]; then
-    USAGE
-    exit 1
-fi
 
 get_github_key() {
     if [ -z "${KEY_ID}" ]; then
-        read -e -p "Please enter the GitHub account:" KEY_ID
+        read -e -p "Please enter the GitHub account: " KEY_ID
         [ -z "${KEY_ID}" ] && echo -e "${ERROR} Invalid input." && exit 1
     fi
     echo -e "${INFO} The GitHub account is: ${KEY_ID}"
@@ -56,7 +51,7 @@ get_github_key() {
 
 get_url_key() {
     if [ -z "${KEY_URL}" ]; then
-        read -e -p "Please enter the URL:" KEY_URL
+        read -e -p "Please enter the URL: " KEY_URL
         [ -z "${KEY_URL}" ] && echo -e "${ERROR} Invalid input." && exit 1
     fi
     echo -e "${INFO} Get key from URL..."
@@ -65,7 +60,7 @@ get_url_key() {
 
 get_local_key() {
     if [ -z "${KEY_PATH}" ]; then
-        read -e -p "Please enter the path:" KEY_PATH
+        read -e -p "Please enter the path: " KEY_PATH
         [ -z "${KEY_PATH}" ] && echo -e "${ERROR} Invalid input." && exit 1
     fi
     echo -e "${INFO} Get key from ${KEY_PATH}..."
@@ -95,7 +90,7 @@ install_key() {
     chmod 700 "${HOME}/.ssh/"
     chmod 600 "${HOME}/.ssh/authorized_keys"
     [[ $(grep "${PUB_KEY}" "${HOME}/.ssh/authorized_keys") ]] &&
-        echo -e "${INFO} SSH Key installed successfully!" || {
+    echo -e "${INFO} SSH Key installed successfully!" || {
         echo -e "${ERROR} SSH key installation failed!"
         exit 1
     }
@@ -104,9 +99,8 @@ install_key() {
 change_port() {
     echo -e "${INFO} Changing SSH port to ${SSH_PORT} ..."
     if [ "$(uname -o)" == "Android" ]; then
-        [[ -z $(grep "Port " "$PREFIX/etc/ssh/sshd_config") ]] &&
-            echo -e "${INFO} Port ${SSH_PORT}" >> "$PREFIX/etc/ssh/sshd_config" ||
-            sed -i "s@.*\(Port \).*@\1${SSH_PORT}@" "$PREFIX/etc/ssh/sshd_config"
+        [[ -z $(grep "Port " "$PREFIX/etc/ssh/sshd_config") ]] && echo -e "Port ${SSH_PORT}" >> "$PREFIX/etc/ssh/sshd_config" ||
+        sed -i "s@^Port.*@Port ${SSH_PORT}@" "$PREFIX/etc/ssh/sshd_config"
         [[ $(grep "Port " "$PREFIX/etc/ssh/sshd_config") ]] && {
             echo -e "${INFO} SSH port changed successfully!"
             RESTART_SSHD=2
@@ -116,7 +110,7 @@ change_port() {
             exit 1
         }
     else
-        $SUDO sed -i "s@.*\(Port \).*@\1${SSH_PORT}@" /etc/ssh/sshd_config && {
+        $SUDO sed -i "s@^#*Port.*@Port ${SSH_PORT}@" /etc/ssh/sshd_config && {
             echo -e "${INFO} SSH port changed successfully!"
             RESTART_SSHD=1
         } || {
@@ -129,7 +123,7 @@ change_port() {
 
 disable_password() {
     if [ "$(uname -o)" == "Android" ]; then
-        sed -i "s@.*\(PasswordAuthentication \).*@\1no@" "$PREFIX/etc/ssh/sshd_config" && {
+        sed -i "s@^#*PasswordAuthentication.*@PasswordAuthentication no@" "$PREFIX/etc/ssh/sshd_config" && {
             RESTART_SSHD=2
             echo -e "${INFO} Disabled password login in SSH."
         } || {
@@ -138,7 +132,7 @@ disable_password() {
             exit 1
         }
     else
-        $SUDO sed -i "s@.*\(PasswordAuthentication \).*@\1no@" /etc/ssh/sshd_config && {
+        $SUDO sed -i "s@^#*PasswordAuthentication.*@PasswordAuthentication no@" /etc/ssh/sshd_config && {
             RESTART_SSHD=1
             echo -e "${INFO} Disabled password login in SSH."
         } || {
@@ -153,16 +147,20 @@ enable_root_login() {
     if [ "$(uname -o)" == "Android" ]; then
         echo -e "${ERROR} Root login is not applicable for Android."
     else
-        $SUDO sed -i "s@.*\(PermitRootLogin \).*@\1yes@" /etc/ssh/sshd_config && {
+        $SUDO sed -i "s@^#*PermitRootLogin.*@PermitRootLogin yes@" /etc/ssh/sshd_config
+        if grep -q "^PermitRootLogin yes" /etc/ssh/sshd_config; then
             RESTART_SSHD=1
             echo -e "${INFO} Enabled root login in SSH."
-        } || {
+        else
             RESTART_SSHD=0
             echo -e "${ERROR} Enable root login failed!"
             exit 1
-        }
+        fi
     fi
 }
+
+RESTART_SSHD=0
+OVERWRITE=0
 
 while getopts "og:u:f:p:dr" OPT; do
     case $OPT in
@@ -170,17 +168,17 @@ while getopts "og:u:f:p:dr" OPT; do
         OVERWRITE=1
         ;;
     g)
-        KEY_ID=$OPTARG
+        KEY_ID="$OPTARG"
         get_github_key
         install_key
         ;;
     u)
-        KEY_URL=$OPTARG
+        KEY_URL="$OPTARG"
         get_url_key
         install_key
         ;;
     f)
-        KEY_PATH=$OPTARG
+        KEY_PATH="$OPTARG"
         get_local_key
         install_key
         ;;

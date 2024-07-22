@@ -1,73 +1,217 @@
 #!/usr/bin/env bash
+#=============================================================
+# https://github.com/P3TERX/SSH_Key_Installer
+# Description: Install SSH keys via GitHub, URL or local files
+# Version: 2.8
+# Author: P3TERX
+# Blog: https://p3terx.com
+#=============================================================
 
-set -o errexit
-set -o errtrace
-set -o pipefail
+VERSION=2.8
+RED_FONT_PREFIX="\033[31m"
+LIGHT_GREEN_FONT_PREFIX="\033[1;32m"
+FONT_COLOR_SUFFIX="\033[0m"
+INFO="[${LIGHT_GREEN_FONT_PREFIX}INFO${FONT_COLOR_SUFFIX}]"
+ERROR="[${RED_FONT_PREFIX}ERROR${FONT_COLOR_SUFFIX}]"
+[ $EUID != 0 ] && SUDO=sudo
 
-Green_font_prefix="\033[32m"
-Red_font_prefix="\033[31m"
-Green_background_prefix="\033[42;37m"
-Red_background_prefix="\033[41;37m"
-Font_color_suffix="\033[0m"
+USAGE() {
+    echo "
+SSH Key Installer $VERSION
 
-INFO="[${Green_font_prefix}信息${Font_color_suffix}]"
-ERROR="[${Red_font_prefix}错误${Font_color_suffix}]"
+Usage:
+  bash <(curl -fsSL git.io/key.sh) [options...] <arg>
 
-# 检查是否为 root 用户
-[[ $EUID -ne 0 ]] && echo -e "${ERROR} 此脚本必须以 root 身份运行！" && exit 1
+Options:
+  -o	Overwrite mode, this option is valid at the top
+  -g	Get the public key from GitHub, the arguments is the GitHub ID
+  -u	Get the public key from the URL, the arguments is the URL
+  -f	Get the public key from the local file, the arguments is the local file path
+  -p	Change SSH port, the arguments is port number
+  -d	Disable password login
+  -r    Enable root login"
+}
 
-# 检查是否提供了 SSH 公钥 URL
-[[ -z "\$1" ]] && echo -e "${ERROR} 请提供 SSH 公钥 URL！" && exit 1
-
-# 检查系统类型
-if [[ -f /etc/redhat-release ]]; then
-    release="centos"
-elif cat /etc/issue | grep -q -E -i "debian"; then
-    release="debian"
-elif cat /etc/issue | grep -q -E -i "ubuntu"; then
-    release="ubuntu"
-elif cat /etc/issue | grep -q -E -i "centos|red hat|redhat"; then
-    release="centos"
-elif cat /proc/version | grep -q -E -i "debian"; then
-    release="debian"
-elif cat /proc/version | grep -q -E -i "ubuntu"; then
-    release="ubuntu"
-elif cat /proc/version | grep -q -E -i "centos|red hat|redhat"; then
-    release="centos"
-else
-    echo -e "${ERROR} 未检测到系统版本，请联系脚本作者！" && exit 1
+if [ $# -eq 0 ]; then
+    USAGE
+    exit 1
 fi
 
-# 设置 SSH 目录和 authorized_keys 文件
-SSH_DIR="/root/.ssh"
-AUTHORIZED_KEYS="${SSH_DIR}/authorized_keys"
+get_github_key() {
+    if [ -z "${KEY_ID}" ]; then
+        read -e -p "Please enter the GitHub account:" KEY_ID
+        [ -z "${KEY_ID}" ] && echo -e "${ERROR} Invalid input." && exit 1
+    fi
+    echo -e "${INFO} The GitHub account is: ${KEY_ID}"
+    echo -e "${INFO} Get key from GitHub..."
+    PUB_KEY=$(curl -fsSL "https://github.com/${KEY_ID}.keys")
+    if [ "${PUB_KEY}" == 'Not Found' ]; then
+        echo -e "${ERROR} GitHub account not found."
+        exit 1
+    elif [ -z "${PUB_KEY}" ]; then
+        echo -e "${ERROR} This account ssh key does not exist."
+        exit 1
+    fi
+}
 
-# 如果 SSH 目录不存在，则创建
-mkdir -p ${SSH_DIR}
+get_url_key() {
+    if [ -z "${KEY_URL}" ]; then
+        read -e -p "Please enter the URL:" KEY_URL
+        [ -z "${KEY_URL}" ] && echo -e "${ERROR} Invalid input." && exit 1
+    fi
+    echo -e "${INFO} Get key from URL..."
+    PUB_KEY=$(curl -fsSL "${KEY_URL}")
+}
 
-# 下载并安装 SSH 密钥
-if ! curl -sSL "\$1" >> ${AUTHORIZED_KEYS}; then
-    echo -e "${ERROR} 下载 SSH 公钥失败！" && exit 1
+get_local_key() {
+    if [ -z "${KEY_PATH}" ]; then
+        read -e -p "Please enter the path:" KEY_PATH
+        [ -z "${KEY_PATH}" ] && echo -e "${ERROR} Invalid input." && exit 1
+    fi
+    echo -e "${INFO} Get key from ${KEY_PATH}..."
+    PUB_KEY=$(cat "${KEY_PATH}")
+}
+
+install_key() {
+    [ -z "${PUB_KEY}" ] && echo "${ERROR} ssh key does not exist." && exit 1
+    if [ ! -f "${HOME}/.ssh/authorized_keys" ]; then
+        echo -e "${INFO} '${HOME}/.ssh/authorized_keys' is missing..."
+        echo -e "${INFO} Creating ${HOME}/.ssh/authorized_keys..."
+        mkdir -p "${HOME}/.ssh/"
+        touch "${HOME}/.ssh/authorized_keys"
+        if [ ! -f "${HOME}/.ssh/authorized_keys" ]; then
+            echo -e "${ERROR} Failed to create SSH key file."
+        else
+            echo -e "${INFO} Key file created, proceeding..."
+        fi
+    fi
+    if [ "${OVERWRITE}" == 1 ]; then
+        echo -e "${INFO} Overwriting SSH key..."
+        echo -e "${PUB_KEY}\n" > "${HOME}/.ssh/authorized_keys"
+    else
+        echo -e "${INFO} Adding SSH key..."
+        echo -e "\n${PUB_KEY}\n" >> "${HOME}/.ssh/authorized_keys"
+    fi
+    chmod 700 "${HOME}/.ssh/"
+    chmod 600 "${HOME}/.ssh/authorized_keys"
+    [[ $(grep "${PUB_KEY}" "${HOME}/.ssh/authorized_keys") ]] &&
+        echo -e "${INFO} SSH Key installed successfully!" || {
+        echo -e "${ERROR} SSH key installation failed!"
+        exit 1
+    }
+}
+
+change_port() {
+    echo -e "${INFO} Changing SSH port to ${SSH_PORT} ..."
+    if [ "$(uname -o)" == "Android" ]; then
+        [[ -z $(grep "Port " "$PREFIX/etc/ssh/sshd_config") ]] &&
+            echo -e "${INFO} Port ${SSH_PORT}" >> "$PREFIX/etc/ssh/sshd_config" ||
+            sed -i "s@.*\(Port \).*@\1${SSH_PORT}@" "$PREFIX/etc/ssh/sshd_config"
+        [[ $(grep "Port " "$PREFIX/etc/ssh/sshd_config") ]] && {
+            echo -e "${INFO} SSH port changed successfully!"
+            RESTART_SSHD=2
+        } || {
+            RESTART_SSHD=0
+            echo -e "${ERROR} SSH port change failed!"
+            exit 1
+        }
+    else
+        $SUDO sed -i "s@.*\(Port \).*@\1${SSH_PORT}@" /etc/ssh/sshd_config && {
+            echo -e "${INFO} SSH port changed successfully!"
+            RESTART_SSHD=1
+        } || {
+            RESTART_SSHD=0
+            echo -e "${ERROR} SSH port change failed!"
+            exit 1
+        }
+    fi
+}
+
+disable_password() {
+    if [ "$(uname -o)" == "Android" ]; then
+        sed -i "s@.*\(PasswordAuthentication \).*@\1no@" "$PREFIX/etc/ssh/sshd_config" && {
+            RESTART_SSHD=2
+            echo -e "${INFO} Disabled password login in SSH."
+        } || {
+            RESTART_SSHD=0
+            echo -e "${ERROR} Disable password login failed!"
+            exit 1
+        }
+    else
+        $SUDO sed -i "s@.*\(PasswordAuthentication \).*@\1no@" /etc/ssh/sshd_config && {
+            RESTART_SSHD=1
+            echo -e "${INFO} Disabled password login in SSH."
+        } || {
+            RESTART_SSHD=0
+            echo -e "${ERROR} Disable password login failed!"
+            exit 1
+        }
+    fi
+}
+
+enable_root_login() {
+    if [ "$(uname -o)" == "Android" ]; then
+        echo -e "${ERROR} Root login is not applicable for Android."
+    else
+        $SUDO sed -i "s@.*\(PermitRootLogin \).*@\1yes@" /etc/ssh/sshd_config && {
+            RESTART_SSHD=1
+            echo -e "${INFO} Enabled root login in SSH."
+        } || {
+            RESTART_SSHD=0
+            echo -e "${ERROR} Enable root login failed!"
+            exit 1
+        }
+    fi
+}
+
+while getopts "og:u:f:p:dr" OPT; do
+    case $OPT in
+    o)
+        OVERWRITE=1
+        ;;
+    g)
+        KEY_ID=$OPTARG
+        get_github_key
+        install_key
+        ;;
+    u)
+        KEY_URL=$OPTARG
+        get_url_key
+        install_key
+        ;;
+    f)
+        KEY_PATH=$OPTARG
+        get_local_key
+        install_key
+        ;;
+    p)
+        SSH_PORT=$OPTARG
+        change_port
+        ;;
+    d)
+        disable_password
+        ;;
+    r)
+        enable_root_login
+        ;;
+    ?)
+        USAGE
+        exit 1
+        ;;
+    :)
+        USAGE
+        exit 1
+        ;;
+    *)
+        USAGE
+        exit 1
+        ;;
+    esac
+done
+
+if [ "$RESTART_SSHD" = 1 ]; then
+    echo -e "${INFO} Restarting sshd..."
+    $SUDO systemctl restart sshd && echo -e "${INFO} Done."
+elif [ "$RESTART_SSHD" = 2 ]; then
+    echo -e "${INFO} Restart sshd or Termux App to take effect."
 fi
-
-# 设置正确的权限
-chmod 700 ${SSH_DIR}
-chmod 600 ${AUTHORIZED_KEYS}
-
-# 禁用密码认证，启用公钥认证
-sed -i '/^#\?PubkeyAuthentication\s\+\w\+/c\PubkeyAuthentication yes' /etc/ssh/sshd_config
-sed -i '/^#\?PasswordAuthentication\s\+\w\+/c\PasswordAuthentication no' /etc/ssh/sshd_config
-
-# 允许 root 用户使用 SSH 密钥登录
-sed -i '/^#\?PermitRootLogin\s\+\w\+/c\PermitRootLogin prohibit-password' /etc/ssh/sshd_config
-
-# 重启 SSH 服务
-if [[ ${release} == "centos" ]]; then
-    systemctl restart sshd.service
-else
-    systemctl restart ssh
-fi
-
-echo -e "${INFO} SSH 密钥安装完成！"
-echo -e "${INFO} 请尝试使用您的私钥登录。"
-echo -e "${INFO} 如果无法登录，请检查您的私钥并重试。"
